@@ -25,7 +25,8 @@ const el = {
   invoiceForm: document.getElementById("invoice-form"),
   customerName: document.getElementById("customer-name"),
   customerPhone: document.getElementById("customer-phone"),
-  invoiceProduct: document.getElementById("invoice-product"),
+  invoiceSku: document.getElementById("invoice-sku"),
+  skuList: document.getElementById("sku-list"),
   invoiceQty: document.getElementById("invoice-qty"),
   addLineItem: document.getElementById("add-line-item"),
   invoiceLines: document.getElementById("invoice-lines"),
@@ -236,21 +237,12 @@ function renderMode() {
 }
 
 function renderProductOptions() {
-  el.invoiceProduct.innerHTML = "";
-
-  if (!state.products.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "Add products first";
-    el.invoiceProduct.appendChild(option);
-    return;
-  }
-
+  if (!el.skuList) return;
+  el.skuList.innerHTML = "";
   state.products.forEach((product) => {
     const option = document.createElement("option");
-    option.value = product.id;
-    option.textContent = `${product.name} (${product.sku}) - Stock: ${product.stock}`;
-    el.invoiceProduct.appendChild(option);
+    option.value = product.sku;
+    el.skuList.appendChild(option);
   });
 }
 
@@ -381,11 +373,12 @@ async function refresh() {
 }
 
 function addDraftLine() {
-  const product = state.products.find((item) => item.id === el.invoiceProduct.value);
+  const typedSku = (el.invoiceSku.value || "").trim().toLowerCase();
+  const product = state.products.find((item) => String(item.sku).trim().toLowerCase() === typedSku);
   const qty = Number(el.invoiceQty.value || 0);
 
   if (!product || qty <= 0) {
-    alert("Choose product and valid quantity.");
+    alert("Enter a valid SKU and quantity.");
     return;
   }
 
@@ -402,7 +395,9 @@ function addDraftLine() {
     total: Number(product.price) * qty
   });
 
+  el.invoiceSku.value = "";
   el.invoiceQty.value = "1";
+  el.invoiceSku.focus();
   renderDraftLines();
 }
 
@@ -522,6 +517,12 @@ async function showStockBySku(shopId) {
 
 el.productForm.addEventListener("submit", onAddProduct);
 el.addLineItem.addEventListener("click", addDraftLine);
+el.invoiceSku.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    addDraftLine();
+  }
+});
 el.invoiceDiscount.addEventListener("input", renderDraftLines);
 el.invoiceTax.addEventListener("input", renderDraftLines);
 el.invoiceForm.addEventListener("submit", onGenerateInvoice);

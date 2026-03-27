@@ -31,7 +31,8 @@
         <input id="customer-phone" type="text" placeholder="Customer phone (optional)" />
 
         <div class="line-item">
-          <select id="invoice-product" required></select>
+          <input id="invoice-sku" type="text" placeholder="Enter SKU code" list="sku-list" required />
+          <datalist id="sku-list"></datalist>
           <input id="invoice-qty" type="number" min="1" value="1" required />
           <button type="button" id="add-line-item">Add Item</button>
         </div>
