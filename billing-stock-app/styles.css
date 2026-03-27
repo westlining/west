@@ -1,0 +1,273 @@
+:root {
+  --bg: #f4f7fb;
+  --surface: #ffffff;
+  --ink: #1f2937;
+  --muted: #6b7280;
+  --primary: #0057d8;
+  --danger: #c92a2a;
+  --ok: #1f7a1f;
+  --warn: #a16207;
+  --border: #d5dbe5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Segoe UI, Tahoma, sans-serif;
+  background: linear-gradient(135deg, #eef3fb 0%, #f8fafc 100%);
+  color: var(--ink);
+}
+
+.app-header {
+  padding: 1.2rem;
+  text-align: center;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  margin: 0;
+}
+
+.app-header p {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+}
+
+.container {
+  max-width: 1100px;
+  margin: 1rem auto 2rem;
+  padding: 0 1rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.card h2 {
+  margin-top: 0;
+}
+
+.grid-form {
+  display: grid;
+  gap: 0.8rem;
+}
+
+input,
+select,
+button {
+  width: 100%;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+button {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.03);
+}
+
+.line-item {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem;
+  text-align: left;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
+.import-label {
+  display: inline-block;
+  background: #e9effd;
+  color: #14356f;
+  padding: 0.65rem 0.8rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.import-label input {
+  display: none;
+}
+
+.invoice-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.invoice-summary p {
+  grid-column: 1 / -1;
+  font-weight: 700;
+  margin: 0;
+}
+
+.badge {
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: #fff;
+}
+
+.badge.ok {
+  background: var(--ok);
+}
+
+.badge.warn {
+  background: var(--warn);
+}
+
+.badge.danger {
+  background: var(--danger);
+}
+
+.small-btn {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+#invoice-modal {
+  max-width: 720px;
+  width: calc(100% - 2rem);
+  border: none;
+  border-radius: 10px;
+}
+
+#invoice-print {
+  white-space: pre-wrap;
+}
+
+.hidden {
+  display: none;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.stat-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #fbfdff;
+}
+
+.stat-box h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.stat-box p {
+  margin: 0.25rem 0 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.shop-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.8rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.shop-summary-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f8fbff;
+}
+
+.shop-summary-card h3 {
+  margin: 0 0 0.3rem;
+}
+
+.shop-summary-card p {
+  margin: 0.2rem 0;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+@media (min-width: 900px) {
+  .container {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #dashboard-card,
+  .shop-only:nth-child(5),
+  .shop-only:nth-child(6) {
+    grid-column: 1 / -1;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .shop-summary-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.link-btn {
+  width: auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--primary);
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.link-btn:hover {
+  filter: none;
+  opacity: 0.85;
+}
+
+.tap-link {
+  cursor: pointer;
+  color: var(--primary);
+  text-decoration: underline;
+}
+

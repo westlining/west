@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Billing + Stock Manager</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Billing + Stock Manager</h1>
+    <p>Simple invoicing and inventory control for small shops.</p>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>Add Product</h2>
+      <form id="product-form" class="grid-form">
+        <input id="product-name" type="text" placeholder="Product name" required />
+        <input id="product-sku" type="text" placeholder="SKU" required />
+        <input id="product-price" type="number" step="0.01" min="0" placeholder="Unit price" required />
+        <input id="product-stock" type="number" min="0" placeholder="Opening stock" required />
+        <button type="submit">Save Product</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Create Invoice</h2>
+      <form id="invoice-form" class="grid-form">
+        <input id="customer-name" type="text" placeholder="Customer name" required />
+        <input id="customer-phone" type="text" placeholder="Customer phone (optional)" />
+
+        <div class="line-item">
+          <select id="invoice-product" required></select>
+          <input id="invoice-qty" type="number" min="1" value="1" required />
+          <button type="button" id="add-line-item">Add Item</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Price</th>
+                <th>Total</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="invoice-lines"></tbody>
+          </table>
+        </div>
+
+        <div class="invoice-summary">
+          <label>
+            Discount
+            <input id="invoice-discount" type="number" step="0.01" min="0" value="0" />
+          </label>
+          <label>
+            Tax %
+            <input id="invoice-tax" type="number" step="0.01" min="0" value="0" />
+          </label>
+          <p id="invoice-total">Grand Total: 0.00</p>
+        </div>
+
+        <button type="submit">Generate Invoice</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Inventory</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>SKU</th>
+              <th>Price</th>
+              <th>Stock</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="inventory-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Invoices</h2>
+      <div class="actions">
+        <button id="export-json">Export Data (JSON)</button>
+        <label class="import-label">
+          Import Data (JSON)
+          <input id="import-json" type="file" accept="application/json" />
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice #</th>
+              <th>Date</th>
+              <th>Customer</th>
+              <th>Amount</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="invoices-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="invoice-modal">
+    <article id="invoice-print"></article>
+    <div class="actions">
+      <button id="print-invoice">Print</button>
+      <button id="close-invoice">Close</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
