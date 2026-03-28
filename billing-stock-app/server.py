@@ -1,9 +1,14 @@
 import argparse
+import base64
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import socket
 import sqlite3
 import ssl
+import time
 import uuid
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,6 +29,8 @@ SHOPS = [
     {"id": "shop3", "name": "Shop 3"},
 ]
 SHOP_IDS = {shop["id"] for shop in SHOPS}
+TOKEN_TTL_SECONDS = 60 * 60 * 12
+TOKENS = {}
 
 
 def ensure_https_certificates(hostnames=None, cert_path=CERT_PATH, key_path=KEY_PATH):
@@ -183,10 +190,104 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
         CREATE INDEX IF NOT EXISTS idx_invoices_shop ON invoices(shop_id);
         CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id);
+
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            uid TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL,
+            shop_id TEXT,
+            created_at TEXT NOT NULL
+        );
         """
     )
+    ensure_default_users(conn)
     conn.commit()
     conn.close()
+
+
+def _hash_password(password, salt=None, iterations=200000):
+    if salt is None:
+        salt = secrets.token_bytes(16)
+    if isinstance(salt, str):
+        salt = base64.b64decode(salt.encode("utf-8"))
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return f"pbkdf2_sha256${iterations}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
+
+
+def _verify_password(password, encoded):
+    try:
+        algo, iter_s, salt_b64, hash_b64 = encoded.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        candidate = _hash_password(password, salt=salt_b64, iterations=int(iter_s))
+        return hmac.compare_digest(candidate, encoded)
+    except Exception:
+        return False
+
+
+def upsert_user(conn, uid, password, role, shop_id=None):
+    user_id = str(uuid.uuid4())
+    password_hash = _hash_password(password)
+    created_at = now_iso()
+    conn.execute(
+        """
+        INSERT INTO users(id, uid, password_hash, role, shop_id, created_at)
+        VALUES(?, ?, ?, ?, ?, ?)
+        ON CONFLICT(uid) DO UPDATE SET
+          password_hash=excluded.password_hash,
+          role=excluded.role,
+          shop_id=excluded.shop_id
+        """,
+        (user_id, uid, password_hash, role, shop_id, created_at),
+    )
+
+
+def ensure_default_users(conn):
+    row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+    if int(row["n"] or 0) > 0:
+        return
+    upsert_user(conn, "main", "main123", "main", None)
+    upsert_user(conn, "shop1", "shop123", "shop", "shop1")
+    upsert_user(conn, "shop2", "shop123", "shop", "shop2")
+    upsert_user(conn, "shop3", "shop123", "shop", "shop3")
+
+
+def get_user_by_uid(conn, uid):
+    row = conn.execute(
+        "SELECT id, uid, password_hash, role, shop_id FROM users WHERE uid = ?",
+        (uid,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def public_user_dict(user):
+    return {
+        "uid": user["uid"],
+        "role": user["role"],
+        "shopId": user["shop_id"],
+    }
+
+
+def issue_token(user):
+    token = secrets.token_urlsafe(32)
+    TOKENS[token] = {
+        "uid": user["uid"],
+        "role": user["role"],
+        "shopId": user["shop_id"],
+        "expiresAt": int(time.time()) + TOKEN_TTL_SECONDS,
+    }
+    return token
+
+
+def token_user(token):
+    data = TOKENS.get(token)
+    if not data:
+        return None
+    if int(time.time()) > int(data["expiresAt"]):
+        TOKENS.pop(token, None)
+        return None
+    return data
 
 
 def now_iso():
@@ -293,11 +394,31 @@ class AppHandler(BaseHTTPRequestHandler):
         shop_id = parts[3]
         return shop_id if shop_id in SHOP_IDS else None
 
+    def _auth_user_or_401(self):
+        auth_header = self.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            self._send_json(401, {"error": "Authentication required."})
+            return None
+        token = auth_header.replace("Bearer ", "", 1).strip()
+        user = token_user(token)
+        if not user:
+            self._send_json(401, {"error": "Invalid or expired session."})
+            return None
+        return user
+
+    def _shop_access_or_403(self, auth_user, shop_id):
+        if auth_user["role"] == "main":
+            return True
+        if auth_user["role"] == "shop" and auth_user.get("shopId") == shop_id:
+            return True
+        self._send_json(403, {"error": "Access denied for this shop."})
+        return False
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_GET(self):
@@ -331,7 +452,21 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "time": now_iso()})
             return
 
+        if path == "/api/auth/me":
+            auth_user = self._auth_user_or_401()
+            if not auth_user:
+                return
+            self._send_json(200, {"user": auth_user})
+            return
+
+        auth_user = self._auth_user_or_401()
+        if not auth_user:
+            return
+
         if path == "/api/shops/summary":
+            if auth_user["role"] != "main":
+                self._send_json(403, {"error": "Main dashboard access only."})
+                return
             conn = db_conn()
             shops = []
             totals = {"sales": 0.0, "invoices": 0, "itemsLeft": 0}
@@ -363,6 +498,8 @@ class AppHandler(BaseHTTPRequestHandler):
         shop_id = self._parse_shop_id(parts)
         if not shop_id:
             self._send_json(404, {"error": "Invalid shop."})
+            return
+        if not self._shop_access_or_403(auth_user, shop_id):
             return
 
         conn = db_conn()
@@ -401,10 +538,20 @@ class AppHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Unknown endpoint."})
 
     def handle_api_post(self, path):
+        if path == "/api/auth/login":
+            self.login()
+            return
+
+        auth_user = self._auth_user_or_401()
+        if not auth_user:
+            return
+
         parts = path.split("/")
         shop_id = self._parse_shop_id(parts)
         if not shop_id:
             self._send_json(404, {"error": "Invalid shop."})
+            return
+        if not self._shop_access_or_403(auth_user, shop_id):
             return
 
         try:
@@ -426,6 +573,29 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(404, {"error": "Unknown endpoint."})
+
+    def login(self):
+        try:
+            payload = self._read_json()
+        except Exception:
+            self._send_json(400, {"error": "Invalid JSON payload."})
+            return
+
+        uid = str(payload.get("uid", "")).strip()
+        password = str(payload.get("password", ""))
+        if not uid or not password:
+            self._send_json(400, {"error": "User ID and password are required."})
+            return
+
+        conn = db_conn()
+        user = get_user_by_uid(conn, uid)
+        conn.close()
+        if not user or not _verify_password(password, user["password_hash"]):
+            self._send_json(401, {"error": "Invalid credentials."})
+            return
+
+        token = issue_token(user)
+        self._send_json(200, {"token": token, "user": public_user_dict(user)})
 
     def create_product(self, shop_id, payload):
         name = str(payload.get("name", "")).strip()
@@ -632,9 +802,29 @@ def main():
     parser.add_argument("--https", action="store_true")
     parser.add_argument("--cert-file", default=str(CERT_PATH))
     parser.add_argument("--key-file", default=str(KEY_PATH))
+    parser.add_argument("--set-uid")
+    parser.add_argument("--set-password")
+    parser.add_argument("--set-role", choices=["main", "shop"])
+    parser.add_argument("--set-shop-id", choices=["shop1", "shop2", "shop3"])
     args = parser.parse_args()
 
     init_db()
+
+    if args.set_uid:
+        if not args.set_password or not args.set_role:
+            raise SystemExit("For user setup, provide --set-uid, --set-password, and --set-role.")
+        if args.set_role == "shop" and not args.set_shop_id:
+            raise SystemExit("For shop role, provide --set-shop-id (shop1/shop2/shop3).")
+        if args.set_role == "main":
+            args.set_shop_id = None
+
+        conn = db_conn()
+        upsert_user(conn, args.set_uid, args.set_password, args.set_role, args.set_shop_id)
+        conn.commit()
+        conn.close()
+        print(f"User updated: uid={args.set_uid}, role={args.set_role}, shop={args.set_shop_id}")
+        return
+
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
 
     scheme = "http"

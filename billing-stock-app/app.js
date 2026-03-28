@@ -1,6 +1,7 @@
 const API_BASE = "/api";
 const LOW_STOCK = 5;
 const MAIN_ID = "main";
+const AUTH_TOKEN_KEY = "billing_auth_token_v1";
 const SHOPS = [
   { id: "shop1", name: "Shop 1" },
   { id: "shop2", name: "Shop 2" },
@@ -12,10 +13,19 @@ const state = {
   draftLines: [],
   products: [],
   invoices: [],
-  summary: null
+  summary: null,
+  authToken: "",
+  authUser: null
 };
 
 const el = {
+  appMain: document.getElementById("app-main"),
+  authCard: document.getElementById("auth-card"),
+  loginForm: document.getElementById("login-form"),
+  loginUid: document.getElementById("login-uid"),
+  loginPassword: document.getElementById("login-password"),
+  logoutBtn: document.getElementById("logout-btn"),
+
   productForm: document.getElementById("product-form"),
   productName: document.getElementById("product-name"),
   productSku: document.getElementById("product-sku"),
@@ -73,8 +83,12 @@ function getStatus(stock) {
 }
 
 async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (state.authToken) {
+    headers.Authorization = `Bearer ${state.authToken}`;
+  }
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers,
     ...options
   });
 
@@ -90,6 +104,22 @@ async function api(path, options = {}) {
   }
 
   return payload;
+}
+
+function setAuth(token, user) {
+  state.authToken = token || "";
+  state.authUser = user || null;
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
+function showLogin(show) {
+  if (el.authCard) el.authCard.classList.toggle("hidden", !show);
+  if (el.appMain) el.appMain.classList.toggle("hidden", show);
+  if (el.logoutBtn) el.logoutBtn.classList.toggle("hidden", show);
 }
 
 function resetInvoiceForm() {
@@ -170,17 +200,21 @@ function renderShopSelector() {
   if (!el.shopSelect) return;
   el.shopSelect.innerHTML = "";
 
-  const mainOpt = document.createElement("option");
-  mainOpt.value = MAIN_ID;
-  mainOpt.textContent = "Main Dashboard";
-  el.shopSelect.appendChild(mainOpt);
-
-  SHOPS.forEach((shop) => {
+  if (state.authUser && state.authUser.role === "main") {
+    const mainOpt = document.createElement("option");
+    mainOpt.value = MAIN_ID;
+    mainOpt.textContent = "Main Dashboard";
+    el.shopSelect.appendChild(mainOpt);
+    el.shopSelect.disabled = true;
+  } else if (state.authUser && state.authUser.role === "shop" && state.authUser.shopId) {
     const option = document.createElement("option");
-    option.value = shop.id;
-    option.textContent = shop.name;
+    option.value = state.authUser.shopId;
+    option.textContent = getShopName(state.authUser.shopId);
     el.shopSelect.appendChild(option);
-  });
+    el.shopSelect.disabled = true;
+  } else {
+    el.shopSelect.disabled = false;
+  }
 
   el.shopSelect.value = state.selectedShopId;
 }
@@ -368,13 +402,18 @@ async function loadShopData(shopId) {
 }
 
 async function refresh() {
+  if (!state.authUser) return;
+
   renderShopSelector();
   renderMode();
 
-  await loadSummary();
-  renderDashboard();
-
-  if (state.selectedShopId !== MAIN_ID) {
+  if (state.authUser.role === "main") {
+    state.selectedShopId = MAIN_ID;
+    await loadSummary();
+    renderDashboard();
+  } else if (state.authUser.role === "shop" && state.authUser.shopId) {
+    state.selectedShopId = state.authUser.shopId;
+    state.summary = null;
     await loadShopData(state.selectedShopId);
     renderProductOptions();
     renderInventory();
@@ -547,6 +586,53 @@ async function showStockBySku(shopId) {
   }
 }
 
+async function attemptRestoreSession() {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (!token) return false;
+  state.authToken = token;
+  try {
+    const result = await api("/auth/me");
+    state.authUser = result.user || null;
+    return Boolean(state.authUser);
+  } catch {
+    setAuth("", null);
+    return false;
+  }
+}
+
+async function onLogin(event) {
+  event.preventDefault();
+  const uid = (el.loginUid.value || "").trim();
+  const password = el.loginPassword.value || "";
+  if (!uid || !password) {
+    alert("User ID and password are required.");
+    return;
+  }
+
+  try {
+    const result = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ uid, password })
+    });
+    setAuth(result.token, result.user);
+    el.loginPassword.value = "";
+    showLogin(false);
+    await refresh();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function onLogout() {
+  setAuth("", null);
+  state.selectedShopId = "shop1";
+  state.products = [];
+  state.invoices = [];
+  state.summary = null;
+  resetInvoiceForm();
+  showLogin(true);
+}
+
 el.productForm.addEventListener("submit", onAddProduct);
 el.addLineItem.addEventListener("click", addDraftLine);
 el.invoiceSku.addEventListener("keydown", (event) => {
@@ -586,7 +672,11 @@ el.inventoryBody.addEventListener("click", async (event) => {
   await onReceiveStock(productId, qty);
 });
 
+el.loginForm.addEventListener("submit", onLogin);
+el.logoutBtn.addEventListener("click", onLogout);
+
 bootstrapUi();
+showLogin(true);
 
 if (el.dashboardCard) {
   el.dashboardCard.addEventListener("click", (event) => {
@@ -613,6 +703,15 @@ if (el.shopSelect) {
   });
 }
 
-refresh().catch((error) => {
+(async () => {
+  const ok = await attemptRestoreSession();
+  if (ok) {
+    showLogin(false);
+    await refresh();
+  } else {
+    showLogin(true);
+  }
+})().catch((error) => {
+  showLogin(true);
   alert(`Server connection error: ${error.message}`);
 });

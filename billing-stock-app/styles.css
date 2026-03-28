@@ -176,6 +176,11 @@ td {
   display: none;
 }
 
+.auth-wrap {
+  max-width: 420px;
+  margin: 1rem auto;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr;

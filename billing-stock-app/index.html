@@ -10,9 +10,22 @@
   <header class="app-header">
     <h1>Billing + Stock Manager</h1>
     <p>Simple invoicing and inventory control for small shops.</p>
+    <div class="actions">
+      <button id="logout-btn" type="button" class="small-btn hidden">Logout</button>
+    </div>
   </header>
 
-  <main class="container">
+  <section id="auth-card" class="card auth-wrap">
+    <h2>Login</h2>
+    <form id="login-form" class="grid-form">
+      <input id="login-uid" type="text" placeholder="User ID" required />
+      <input id="login-password" type="password" placeholder="Password" required />
+      <button type="submit">Sign In</button>
+    </form>
+    <p class="muted">Use your assigned shop/main credentials.</p>
+  </section>
+
+  <main id="app-main" class="container hidden">
     <section class="card">
       <h2>Add Product</h2>
       <form id="product-form" class="grid-form">

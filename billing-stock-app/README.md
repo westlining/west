@@ -17,6 +17,28 @@ python server.py --host 0.0.0.0 --port 8080
 ```
 3. Keep this terminal running.
 
+## Login security (separate UID/password)
+This app now requires login. Default users are:
+- `main` / `main123` (main dashboard access only)
+- `shop1` / `shop123`
+- `shop2` / `shop123`
+- `shop3` / `shop123`
+
+Set your own credentials from main server machine:
+
+```powershell
+python server.py --set-uid main_admin --set-password YOUR_MAIN_PASS --set-role main
+python server.py --set-uid shop1_user --set-password YOUR_SHOP1_PASS --set-role shop --set-shop-id shop1
+python server.py --set-uid shop2_user --set-password YOUR_SHOP2_PASS --set-role shop --set-shop-id shop2
+python server.py --set-uid shop3_user --set-password YOUR_SHOP3_PASS --set-role shop --set-shop-id shop3
+```
+
+Then run server normally again:
+
+```powershell
+python server.py --host 0.0.0.0 --port 8080
+```
+
 ## Access from shop computers
 1. Find main computer LAN IP (example `192.168.1.20`).
 2. On each shop computer open browser:
