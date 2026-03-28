@@ -35,6 +35,7 @@ const el = {
   invoiceTotal: document.getElementById("invoice-total"),
 
   inventoryBody: document.getElementById("inventory-body"),
+  inventoryTotal: document.getElementById("inventory-total"),
   invoicesBody: document.getElementById("invoices-body"),
 
   exportJson: document.getElementById("export-json"),
@@ -248,6 +249,10 @@ function renderProductOptions() {
 
 function renderInventory() {
   el.inventoryBody.innerHTML = "";
+  const totalStock = state.products.reduce((sum, product) => sum + Number(product.stock || 0), 0);
+  if (el.inventoryTotal) {
+    el.inventoryTotal.textContent = `Total Stocks Available: ${totalStock}`;
+  }
 
   state.products.forEach((product) => {
     const status = getStatus(Number(product.stock || 0));
