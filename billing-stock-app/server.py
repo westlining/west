@@ -417,6 +417,10 @@ class AppHandler(BaseHTTPRequestHandler):
             self.create_product(shop_id, payload)
             return
 
+        if path.endswith("/stock/add"):
+            self.add_stock(shop_id, payload)
+            return
+
         if path.endswith("/invoices"):
             self.create_invoice(shop_id, payload)
             return
@@ -449,6 +453,33 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json(201, {"ok": True})
         except sqlite3.IntegrityError:
             self._send_json(409, {"error": "SKU already exists in this shop."})
+        finally:
+            conn.close()
+
+    def add_stock(self, shop_id, payload):
+        product_id = str(payload.get("productId", "")).strip()
+        qty = int(payload.get("qty", 0))
+
+        if not product_id or qty <= 0:
+            self._send_json(400, {"error": "Valid product and quantity are required."})
+            return
+
+        conn = db_conn()
+        try:
+            product = conn.execute(
+                "SELECT id FROM products WHERE id = ? AND shop_id = ?",
+                (product_id, shop_id),
+            ).fetchone()
+            if not product:
+                self._send_json(404, {"error": "Product not found in this shop."})
+                return
+
+            conn.execute(
+                "UPDATE products SET stock = stock + ? WHERE id = ? AND shop_id = ?",
+                (qty, product_id, shop_id),
+            )
+            conn.commit()
+            self._send_json(200, {"ok": True})
         finally:
             conn.close()
 

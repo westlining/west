@@ -263,6 +263,12 @@ function renderInventory() {
       <td>${money(product.price)}</td>
       <td>${product.stock}</td>
       <td><span class="badge ${status.level}">${status.text}</span></td>
+      <td>
+        <div class="inventory-add-controls">
+          <input type="number" min="1" value="1" data-stock-input="${product.id}" />
+          <button type="button" class="small-btn" data-add-stock="${product.id}">Add</button>
+        </div>
+      </td>
     `;
     el.inventoryBody.appendChild(row);
   });
@@ -473,6 +479,27 @@ async function onGenerateInvoice(event) {
   }
 }
 
+async function onReceiveStock(productId, qty) {
+  if (state.selectedShopId === MAIN_ID) return;
+  if (!productId || qty <= 0) {
+    alert("Enter valid received stock quantity.");
+    return;
+  }
+
+  try {
+    await api(`/shops/${state.selectedShopId}/stock/add`, {
+      method: "POST",
+      body: JSON.stringify({
+        productId,
+        qty
+      })
+    });
+    await refresh();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function showTodaySalesByItem(shopId) {
   try {
     const result = await api(`/shops/${shopId}/sales/today`);
@@ -546,6 +573,17 @@ el.invoicesBody.addEventListener("click", (event) => {
   if (!(target instanceof HTMLElement)) return;
   const id = target.getAttribute("data-view-invoice");
   if (id) showInvoice(id);
+});
+
+el.inventoryBody.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const productId = target.getAttribute("data-add-stock");
+  if (!productId) return;
+
+  const input = el.inventoryBody.querySelector(`[data-stock-input="${productId}"]`);
+  const qty = input instanceof HTMLInputElement ? Number(input.value || 0) : 0;
+  await onReceiveStock(productId, qty);
 });
 
 bootstrapUi();

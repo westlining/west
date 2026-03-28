@@ -271,3 +271,10 @@ td {
   text-decoration: underline;
 }
 
+.inventory-add-controls {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem;
+  align-items: center;
+}
+
