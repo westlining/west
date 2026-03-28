@@ -217,6 +217,10 @@ function renderShopSelector() {
   }
 
   el.shopSelect.value = state.selectedShopId;
+  if (el.shopSelect.value !== state.selectedShopId) {
+    el.shopSelect.selectedIndex = 0;
+    state.selectedShopId = el.shopSelect.value || MAIN_ID;
+  }
 }
 
 function renderDashboard() {
@@ -404,15 +408,19 @@ async function loadShopData(shopId) {
 async function refresh() {
   if (!state.authUser) return;
 
+  if (state.authUser.role === "main") {
+    state.selectedShopId = MAIN_ID;
+  } else if (state.authUser.role === "shop" && state.authUser.shopId) {
+    state.selectedShopId = state.authUser.shopId;
+  }
+
   renderShopSelector();
   renderMode();
 
   if (state.authUser.role === "main") {
-    state.selectedShopId = MAIN_ID;
     await loadSummary();
     renderDashboard();
   } else if (state.authUser.role === "shop" && state.authUser.shopId) {
-    state.selectedShopId = state.authUser.shopId;
     state.summary = null;
     await loadShopData(state.selectedShopId);
     renderProductOptions();
