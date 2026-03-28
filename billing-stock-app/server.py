@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "billing_stock.db"
+DB_PATH = Path(os.getenv("BILLING_DB_PATH", str(BASE_DIR / "billing_stock.db")))
 CERT_PATH = BASE_DIR / "cert.pem"
 KEY_PATH = BASE_DIR / "key.pem"
 CA_CERT_PATH = BASE_DIR / "rootCA.pem"
