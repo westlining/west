@@ -229,6 +229,8 @@ def init_db():
     for ddl in ddl_statements:
         _execute(conn, ddl)
     ensure_default_users(conn)
+    apply_env_users(conn)
+    enforce_env_users(conn)
     conn.commit()
     conn.close()
 
@@ -278,6 +280,48 @@ def ensure_default_users(conn):
     upsert_user(conn, "shop1", "shop123", "shop", "shop1")
     upsert_user(conn, "shop2", "shop123", "shop", "shop2")
     upsert_user(conn, "shop3", "shop123", "shop", "shop3")
+
+
+def apply_env_users(conn):
+    main_uid = os.getenv("AUTH_MAIN_UID")
+    main_pass = os.getenv("AUTH_MAIN_PASSWORD")
+    if main_uid and main_pass:
+        upsert_user(conn, main_uid, main_pass, "main", None)
+
+    s1_uid = os.getenv("AUTH_SHOP1_UID")
+    s1_pass = os.getenv("AUTH_SHOP1_PASSWORD")
+    if s1_uid and s1_pass:
+        upsert_user(conn, s1_uid, s1_pass, "shop", "shop1")
+
+    s2_uid = os.getenv("AUTH_SHOP2_UID")
+    s2_pass = os.getenv("AUTH_SHOP2_PASSWORD")
+    if s2_uid and s2_pass:
+        upsert_user(conn, s2_uid, s2_pass, "shop", "shop2")
+
+    s3_uid = os.getenv("AUTH_SHOP3_UID")
+    s3_pass = os.getenv("AUTH_SHOP3_PASSWORD")
+    if s3_uid and s3_pass:
+        upsert_user(conn, s3_uid, s3_pass, "shop", "shop3")
+
+
+def enforce_env_users(conn):
+    if os.getenv("AUTH_ENFORCE_ENV_USERS", "").strip().lower() not in {"1", "true", "yes"}:
+        return
+
+    required = {
+        "main": (os.getenv("AUTH_MAIN_UID"), os.getenv("AUTH_MAIN_PASSWORD"), None),
+        "shop1": (os.getenv("AUTH_SHOP1_UID"), os.getenv("AUTH_SHOP1_PASSWORD"), "shop1"),
+        "shop2": (os.getenv("AUTH_SHOP2_UID"), os.getenv("AUTH_SHOP2_PASSWORD"), "shop2"),
+        "shop3": (os.getenv("AUTH_SHOP3_UID"), os.getenv("AUTH_SHOP3_PASSWORD"), "shop3"),
+    }
+    if not all(uid and pwd for uid, pwd, _ in required.values()):
+        return
+
+    _execute(conn, "DELETE FROM users")
+    upsert_user(conn, required["main"][0], required["main"][1], "main", None)
+    upsert_user(conn, required["shop1"][0], required["shop1"][1], "shop", required["shop1"][2])
+    upsert_user(conn, required["shop2"][0], required["shop2"][1], "shop", required["shop2"][2])
+    upsert_user(conn, required["shop3"][0], required["shop3"][1], "shop", required["shop3"][2])
 
 
 def get_user_by_uid(conn, uid):
@@ -465,6 +509,38 @@ class AppHandler(BaseHTTPRequestHandler):
         if file_path == BASE_DIR:
             file_path = BASE_DIR / "index.html"
         self._send_file(file_path)
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/api/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            return
+
+        safe_path = path.lstrip("/") or "index.html"
+        file_path = (BASE_DIR / safe_path).resolve()
+        if BASE_DIR not in file_path.parents and file_path != BASE_DIR:
+            self.send_error(403, "Forbidden")
+            return
+        if file_path == BASE_DIR:
+            file_path = BASE_DIR / "index.html"
+        if not file_path.exists() or not file_path.is_file():
+            self.send_error(404, "Not Found")
+            return
+
+        mime = {
+            ".html": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+        }.get(file_path.suffix.lower(), "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(file_path.stat().st_size))
+        self.end_headers()
 
     def do_POST(self):
         parsed = urlparse(self.path)
