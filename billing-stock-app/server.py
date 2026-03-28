@@ -15,9 +15,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlparse
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:
+    psycopg = None
+    dict_row = None
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("BILLING_DB_PATH", str(BASE_DIR / "billing_stock.db")))
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
 CERT_PATH = BASE_DIR / "cert.pem"
 KEY_PATH = BASE_DIR / "key.pem"
 CA_CERT_PATH = BASE_DIR / "rootCA.pem"
@@ -142,14 +150,29 @@ def ensure_https_certificates(hostnames=None, cert_path=CERT_PATH, key_path=KEY_
 
 
 def db_conn():
+    if USE_POSTGRES:
+        if psycopg is None:
+            raise RuntimeError("PostgreSQL mode requested but psycopg is not installed.")
+        sslmode = os.getenv("PGSSLMODE", "require")
+        return psycopg.connect(DATABASE_URL, sslmode=sslmode, row_factory=dict_row)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+def _sql(query):
+    if USE_POSTGRES:
+        return query.replace("?", "%s")
+    return query
+
+
+def _execute(conn, query, params=()):
+    return conn.execute(_sql(query), params)
+
+
 def init_db():
     conn = db_conn()
-    conn.executescript(
+    ddl_statements = [
         """
         CREATE TABLE IF NOT EXISTS products (
             id TEXT PRIMARY KEY,
@@ -160,8 +183,9 @@ def init_db():
             stock INTEGER NOT NULL,
             created_at TEXT NOT NULL,
             UNIQUE(shop_id, sku)
-        );
-
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS invoices (
             id TEXT PRIMARY KEY,
             shop_id TEXT NOT NULL,
@@ -174,8 +198,9 @@ def init_db():
             tax_rate REAL NOT NULL,
             tax_amount REAL NOT NULL,
             total REAL NOT NULL
-        );
-
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS invoice_lines (
             id TEXT PRIMARY KEY,
             invoice_id TEXT NOT NULL,
@@ -185,12 +210,12 @@ def init_db():
             price REAL NOT NULL,
             total REAL NOT NULL,
             FOREIGN KEY(invoice_id) REFERENCES invoices(id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id);
-        CREATE INDEX IF NOT EXISTS idx_invoices_shop ON invoices(shop_id);
-        CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id);
-
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_products_shop ON products(shop_id)",
+        "CREATE INDEX IF NOT EXISTS idx_invoices_shop ON invoices(shop_id)",
+        "CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id)",
+        """
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             uid TEXT NOT NULL UNIQUE,
@@ -198,9 +223,11 @@ def init_db():
             role TEXT NOT NULL,
             shop_id TEXT,
             created_at TEXT NOT NULL
-        );
-        """
-    )
+        )
+        """,
+    ]
+    for ddl in ddl_statements:
+        _execute(conn, ddl)
     ensure_default_users(conn)
     conn.commit()
     conn.close()
@@ -230,7 +257,7 @@ def upsert_user(conn, uid, password, role, shop_id=None):
     user_id = str(uuid.uuid4())
     password_hash = _hash_password(password)
     created_at = now_iso()
-    conn.execute(
+    _execute(conn, 
         """
         INSERT INTO users(id, uid, password_hash, role, shop_id, created_at)
         VALUES(?, ?, ?, ?, ?, ?)
@@ -244,7 +271,7 @@ def upsert_user(conn, uid, password, role, shop_id=None):
 
 
 def ensure_default_users(conn):
-    row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+    row = _execute(conn, "SELECT COUNT(*) AS n FROM users").fetchone()
     if int(row["n"] or 0) > 0:
         return
     upsert_user(conn, "main", "main123", "main", None)
@@ -254,7 +281,7 @@ def ensure_default_users(conn):
 
 
 def get_user_by_uid(conn, uid):
-    row = conn.execute(
+    row = _execute(conn,
         "SELECT id, uid, password_hash, role, shop_id FROM users WHERE uid = ?",
         (uid,),
     ).fetchone()
@@ -299,7 +326,7 @@ def serialize_row(row):
 
 
 def query_products(conn, shop_id):
-    rows = conn.execute(
+    rows = _execute(conn,
         "SELECT id, shop_id, name, sku, price, stock, created_at FROM products WHERE shop_id = ? ORDER BY sku ASC",
         (shop_id,),
     ).fetchall()
@@ -320,9 +347,9 @@ def query_invoices(conn, shop_id, start_iso=None, end_iso=None):
     sql += " ORDER BY created_at DESC"
 
     invoices = []
-    for inv in conn.execute(sql, params).fetchall():
+    for inv in _execute(conn, sql, params).fetchall():
         invoice = serialize_row(inv)
-        line_rows = conn.execute(
+        line_rows = _execute(conn,
             """
             SELECT id, invoice_id, product_id, name, qty, price, total
             FROM invoice_lines
@@ -344,7 +371,7 @@ def today_bounds():
 
 
 def make_invoice_number(conn, shop_id):
-    count = conn.execute("SELECT COUNT(*) AS n FROM invoices WHERE shop_id = ?", (shop_id,)).fetchone()["n"]
+    count = _execute(conn, "SELECT COUNT(*) AS n FROM invoices WHERE shop_id = ?", (shop_id,)).fetchone()["n"]
     shop_name = next((s["name"] for s in SHOPS if s["id"] == shop_id), shop_id)
     prefix = shop_name.replace(" ", "").upper()
     return f"{prefix}-{count + 1:04d}"
@@ -471,11 +498,11 @@ class AppHandler(BaseHTTPRequestHandler):
             shops = []
             totals = {"sales": 0.0, "invoices": 0, "itemsLeft": 0}
             for shop in SHOPS:
-                sales = conn.execute(
+                sales = _execute(conn,
                     "SELECT COALESCE(SUM(total), 0) AS total_sales, COUNT(*) AS total_invoices FROM invoices WHERE shop_id = ?",
                     (shop["id"],),
                 ).fetchone()
-                stock = conn.execute(
+                stock = _execute(conn,
                     "SELECT COALESCE(SUM(stock), 0) AS items_left FROM products WHERE shop_id = ?",
                     (shop["id"],),
                 ).fetchone()
@@ -612,7 +639,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         conn = db_conn()
         try:
-            conn.execute(
+            _execute(conn,
                 """
                 INSERT INTO products(id, shop_id, name, sku, price, stock, created_at)
                 VALUES(?, ?, ?, ?, ?, ?, ?)
@@ -621,8 +648,12 @@ class AppHandler(BaseHTTPRequestHandler):
             )
             conn.commit()
             self._send_json(201, {"ok": True})
-        except sqlite3.IntegrityError:
-            self._send_json(409, {"error": "SKU already exists in this shop."})
+        except Exception as err:
+            err_text = str(err).lower()
+            if "unique" in err_text or "duplicate" in err_text:
+                self._send_json(409, {"error": "SKU already exists in this shop."})
+            else:
+                self._send_json(500, {"error": "Could not save product."})
         finally:
             conn.close()
 
@@ -636,7 +667,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         conn = db_conn()
         try:
-            product = conn.execute(
+            product = _execute(conn,
                 "SELECT id FROM products WHERE id = ? AND shop_id = ?",
                 (product_id, shop_id),
             ).fetchone()
@@ -644,7 +675,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "Product not found in this shop."})
                 return
 
-            conn.execute(
+            _execute(conn,
                 "UPDATE products SET stock = stock + ? WHERE id = ? AND shop_id = ?",
                 (qty, product_id, shop_id),
             )
@@ -678,10 +709,11 @@ class AppHandler(BaseHTTPRequestHandler):
 
         conn = db_conn()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            if not USE_POSTGRES:
+                _execute(conn, "BEGIN IMMEDIATE")
 
             placeholders = ",".join(["?"] * len(usage))
-            rows = conn.execute(
+            rows = _execute(conn,
                 f"SELECT id, name, sku, price, stock FROM products WHERE shop_id = ? AND id IN ({placeholders})",
                 [shop_id, *usage.keys()],
             ).fetchall()
@@ -717,7 +749,7 @@ class AppHandler(BaseHTTPRequestHandler):
             grand_total = after_discount + tax_amount
 
             for product_id, qty in usage.items():
-                conn.execute(
+                _execute(conn,
                     "UPDATE products SET stock = stock - ? WHERE id = ? AND shop_id = ?",
                     (qty, product_id, shop_id),
                 )
@@ -725,7 +757,7 @@ class AppHandler(BaseHTTPRequestHandler):
             invoice_id = str(uuid.uuid4())
             number = make_invoice_number(conn, shop_id)
             created_at = now_iso()
-            conn.execute(
+            _execute(conn,
                 """
                 INSERT INTO invoices(
                     id, shop_id, number, created_at, customer_name, customer_phone,
@@ -748,7 +780,7 @@ class AppHandler(BaseHTTPRequestHandler):
             )
 
             for line in line_items:
-                conn.execute(
+                _execute(conn,
                     """
                     INSERT INTO invoice_lines(id, invoice_id, product_id, name, qty, price, total)
                     VALUES (?, ?, ?, ?, ?, ?, ?)

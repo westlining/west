@@ -77,4 +77,24 @@ Use this when your 3 shops are in different locations.
 
 ### 4) Important note
 - SQLite on free web services can reset on redeploy/restart.
-- For production use, move data to managed database (PostgreSQL/MySQL). This is the next recommended step.
+- For lifetime data, use one of these:
+  - Render persistent disk + `BILLING_DB_PATH` env var
+  - Managed database (PostgreSQL/MySQL)
+
+### Render persistent data setup
+1. In Render service, add a persistent disk (for example mount path `/var/data`).
+2. Add environment variable:
+   - `BILLING_DB_PATH=/var/data/billing_stock.db`
+3. Redeploy service.
+
+After this, inventory/products will remain until you remove them.
+
+### Render PostgreSQL setup (recommended)
+If disk option is unavailable, use Postgres:
+1. Create Render PostgreSQL service.
+2. In Web Service -> Environment add:
+   - `DATABASE_URL=<your postgres url>`
+   - `PGSSLMODE=require`
+3. Redeploy latest commit.
+
+Server will automatically switch to PostgreSQL when `DATABASE_URL` is set.
