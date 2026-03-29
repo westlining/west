@@ -775,13 +775,28 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         usage = {}
+        parsed_lines = []
         for line in raw_lines:
             product_id = str(line.get("productId", "")).strip()
             qty = int(line.get("qty", 0))
             if not product_id or qty <= 0:
                 self._send_json(400, {"error": "Invalid line items."})
                 return
+            raw_price = line.get("price", None)
+            custom_price = None
+            if raw_price not in (None, ""):
+                custom_price = float(raw_price)
+                if custom_price < 0:
+                    self._send_json(400, {"error": "Price must be >= 0."})
+                    return
             usage[product_id] = usage.get(product_id, 0) + qty
+            parsed_lines.append(
+                {
+                    "productId": product_id,
+                    "qty": qty,
+                    "price": custom_price,
+                }
+            )
 
         conn = db_conn()
         try:
@@ -804,9 +819,11 @@ class AppHandler(BaseHTTPRequestHandler):
 
             line_items = []
             subtotal = 0.0
-            for product_id, qty in usage.items():
+            for line in parsed_lines:
+                product_id = line["productId"]
+                qty = line["qty"]
                 product = products[product_id]
-                price = float(product["price"])
+                price = float(line["price"]) if line["price"] is not None else float(product["price"])
                 total = price * qty
                 subtotal += total
                 line_items.append(

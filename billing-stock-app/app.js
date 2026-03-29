@@ -38,6 +38,7 @@ const el = {
   invoiceSku: document.getElementById("invoice-sku"),
   skuList: document.getElementById("sku-list"),
   invoiceQty: document.getElementById("invoice-qty"),
+  invoicePrice: document.getElementById("invoice-price"),
   addLineItem: document.getElementById("add-line-item"),
   invoiceLines: document.getElementById("invoice-lines"),
   invoiceDiscount: document.getElementById("invoice-discount"),
@@ -80,6 +81,12 @@ function getStatus(stock) {
   if (stock <= 0) return { text: "Out", level: "danger" };
   if (stock <= LOW_STOCK) return { text: "Low", level: "warn" };
   return { text: "Healthy", level: "ok" };
+}
+
+function findProductBySku(skuValue) {
+  const typedSku = String(skuValue || "").trim().toLowerCase();
+  if (!typedSku) return null;
+  return state.products.find((item) => String(item.sku).trim().toLowerCase() === typedSku) || null;
 }
 
 async function api(path, options = {}) {
@@ -126,6 +133,7 @@ function resetInvoiceForm() {
   state.draftLines = [];
   el.invoiceForm.reset();
   el.invoiceQty.value = "1";
+  if (el.invoicePrice) el.invoicePrice.value = "";
   el.invoiceDiscount.value = "0";
   el.invoiceTax.value = "0";
   renderDraftLines();
@@ -431,12 +439,17 @@ async function refresh() {
 }
 
 function addDraftLine() {
-  const typedSku = (el.invoiceSku.value || "").trim().toLowerCase();
-  const product = state.products.find((item) => String(item.sku).trim().toLowerCase() === typedSku);
+  const product = findProductBySku(el.invoiceSku.value);
   const qty = Number(el.invoiceQty.value || 0);
+  const priceRaw = String((el.invoicePrice && el.invoicePrice.value) || "").trim();
+  const unitPrice = priceRaw === "" ? Number(product && product.price) : Number(priceRaw);
 
   if (!product || qty <= 0) {
     alert("Enter a valid SKU and quantity.");
+    return;
+  }
+  if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+    alert("Enter a valid price.");
     return;
   }
 
@@ -449,12 +462,13 @@ function addDraftLine() {
     productId: product.id,
     name: product.name,
     qty,
-    price: Number(product.price),
-    total: Number(product.price) * qty
+    price: unitPrice,
+    total: unitPrice * qty
   });
 
   el.invoiceSku.value = "";
   el.invoiceQty.value = "1";
+  if (el.invoicePrice) el.invoicePrice.value = "";
   el.invoiceSku.focus();
   renderDraftLines();
 }
@@ -504,7 +518,7 @@ async function onGenerateInvoice(event) {
     const payload = {
       customerName: el.customerName.value.trim(),
       customerPhone: el.customerPhone.value.trim(),
-      lines: state.draftLines.map((line) => ({ productId: line.productId, qty: line.qty })),
+      lines: state.draftLines.map((line) => ({ productId: line.productId, qty: line.qty, price: line.price })),
       discount: Number(el.invoiceDiscount.value || 0),
       taxRate: Number(el.invoiceTax.value || 0)
     };
@@ -643,6 +657,11 @@ function onLogout() {
 
 el.productForm.addEventListener("submit", onAddProduct);
 el.addLineItem.addEventListener("click", addDraftLine);
+el.invoiceSku.addEventListener("input", () => {
+  const product = findProductBySku(el.invoiceSku.value);
+  if (!product || !el.invoicePrice) return;
+  el.invoicePrice.value = Number(product.price).toFixed(2);
+});
 el.invoiceSku.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
