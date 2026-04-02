@@ -4,12 +4,14 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import socket
 import sqlite3
 import ssl
 import time
 import uuid
+import calendar
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
@@ -39,6 +41,7 @@ SHOPS = [
 SHOP_IDS = {shop["id"] for shop in SHOPS}
 TOKEN_TTL_SECONDS = 60 * 60 * 12
 TOKENS = {}
+INVOICE_RETENTION_MONTHS = 2
 
 
 def ensure_https_certificates(hostnames=None, cert_path=CERT_PATH, key_path=KEY_PATH):
@@ -231,6 +234,7 @@ def init_db():
     ensure_default_users(conn)
     apply_env_users(conn)
     enforce_env_users(conn)
+    purge_old_invoices(conn)
     conn.commit()
     conn.close()
 
@@ -408,6 +412,37 @@ def query_invoices(conn, shop_id, start_iso=None, end_iso=None):
     return invoices
 
 
+def utc_now():
+    return datetime.utcnow()
+
+
+def subtract_months(dt, months):
+    year = dt.year
+    month = dt.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    max_day = calendar.monthrange(year, month)[1]
+    day = min(dt.day, max_day)
+    return dt.replace(year=year, month=month, day=day)
+
+
+def retention_cutoff_iso(months=INVOICE_RETENTION_MONTHS):
+    cutoff = subtract_months(utc_now(), months)
+    return cutoff.isoformat(timespec="seconds") + "Z"
+
+
+def purge_old_invoices(conn, months=INVOICE_RETENTION_MONTHS):
+    cutoff = retention_cutoff_iso(months)
+    _execute(
+        conn,
+        "DELETE FROM invoice_lines WHERE invoice_id IN (SELECT id FROM invoices WHERE created_at < ?)",
+        (cutoff,),
+    )
+    _execute(conn, "DELETE FROM invoices WHERE created_at < ?", (cutoff,))
+    conn.commit()
+
+
 def today_bounds():
     now = datetime.now()
     start = datetime(now.year, now.month, now.day)
@@ -416,10 +451,20 @@ def today_bounds():
 
 
 def make_invoice_number(conn, shop_id):
-    count = _execute(conn, "SELECT COUNT(*) AS n FROM invoices WHERE shop_id = ?", (shop_id,)).fetchone()["n"]
     shop_name = next((s["name"] for s in SHOPS if s["id"] == shop_id), shop_id)
     prefix = shop_name.replace(" ", "").upper()
-    return f"{prefix}-{count + 1:04d}"
+    rows = _execute(conn, "SELECT number FROM invoices WHERE shop_id = ?", (shop_id,)).fetchall()
+    max_n = 0
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    for row in rows:
+        text = str(row["number"] or "")
+        match = pattern.match(text)
+        if not match:
+            continue
+        n = int(match.group(1))
+        if n > max_n:
+            max_n = n
+    return f"{prefix}-{max_n + 1:04d}"
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -572,6 +617,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "Main dashboard access only."})
                 return
             conn = db_conn()
+            purge_old_invoices(conn)
             shops = []
             totals = {"sales": 0.0, "invoices": 0, "itemsLeft": 0}
             for shop in SHOPS:
@@ -618,11 +664,13 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         if path.endswith("/invoices"):
+            purge_old_invoices(conn)
             self._send_json(200, {"items": query_invoices(conn, shop_id)})
             conn.close()
             return
 
         if path.endswith("/sales/today"):
+            purge_old_invoices(conn)
             start_iso, end_iso = today_bounds()
             invoices = query_invoices(conn, shop_id, start_iso, end_iso)
             total_sales = sum(float(inv["total"]) for inv in invoices)
