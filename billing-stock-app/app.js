@@ -72,6 +72,42 @@ function money(value) {
   return Number(value || 0).toFixed(2);
 }
 
+function parseServerDateTime(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const hasTz = /([zZ]|[+\-]\d{2}:\d{2})$/.test(raw);
+  const normalized = hasTz ? raw : `${raw}Z`;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDateTime(value) {
+  const dt = parseServerDateTime(value);
+  if (!dt) return "-";
+  return dt.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  });
+}
+
+function formatTime(value) {
+  const dt = parseServerDateTime(value);
+  if (!dt) return "-";
+  return dt.toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  });
+}
+
 function getShopName(shopId) {
   const shop = SHOPS.find((s) => s.id === shopId);
   return shop ? shop.name : "Unknown Shop";
@@ -327,6 +363,7 @@ function renderDraftLines() {
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${line.name}</td>
+      <td>${line.sku || "-"}</td>
       <td>${line.qty}</td>
       <td>${money(line.price)}</td>
       <td>${money(line.total)}</td>
@@ -352,7 +389,7 @@ function renderInvoices() {
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${invoice.number}</td>
-      <td>${new Date(invoice.created_at).toLocaleString()}</td>
+      <td>${formatDateTime(invoice.created_at)}</td>
       <td>${invoice.customer_name}</td>
       <td>${money(invoice.total)}</td>
       <td><button type="button" class="small-btn" data-view-invoice="${invoice.id}">View</button></td>
@@ -377,7 +414,7 @@ function invoiceText(invoice) {
     getShopName(invoice.shop_id || state.selectedShopId),
     "-----------------",
     `Invoice No: ${invoice.number}`,
-    `Date: ${new Date(invoice.created_at).toLocaleString()}`,
+    `Date: ${formatDateTime(invoice.created_at)}`,
     `Customer: ${invoice.customer_name || "-"}`,
     `Phone: ${invoice.customer_phone || "-"}`,
     "",
@@ -461,6 +498,7 @@ function addDraftLine() {
   state.draftLines.push({
     productId: product.id,
     name: product.name,
+    sku: product.sku,
     qty,
     price: unitPrice,
     total: unitPrice * qty
@@ -575,7 +613,7 @@ async function showTodaySalesByItem(shopId) {
     } else {
       result.invoices.forEach((invoice, index) => {
         lines.push(`Invoice: ${invoice.number}`);
-        lines.push(`Time: ${new Date(invoice.created_at).toLocaleTimeString()}`);
+    lines.push(`Time: ${formatTime(invoice.created_at)}`);
         lines.push(`Customer: ${invoice.customer_name || "-"}`);
         lines.push("Items:");
         invoice.lines.forEach((line) => {

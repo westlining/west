@@ -362,7 +362,8 @@ def token_user(token):
 
 
 def now_iso():
-    return datetime.now().isoformat(timespec="seconds")
+    # Always store UTC with timezone marker for consistent client display.
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
 def serialize_row(row):
