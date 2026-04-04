@@ -108,6 +108,29 @@ function formatTime(value) {
   });
 }
 
+function dateKeyIST(value) {
+  const dt = parseServerDateTime(value);
+  if (!dt) return "";
+  return dt.toLocaleDateString("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+}
+
+function formatDateOnlyIST(value) {
+  const dt = parseServerDateTime(value);
+  if (!dt) return "-";
+  return dt.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    weekday: "long"
+  });
+}
+
 function getShopName(shopId) {
   const shop = SHOPS.find((s) => s.id === shopId);
   return shop ? shop.name : "Unknown Shop";
@@ -336,10 +359,11 @@ function renderInventory() {
     el.inventoryTotal.textContent = `Total Stocks Available: ${totalStock}`;
   }
 
-  state.products.forEach((product) => {
+  state.products.forEach((product, index) => {
     const status = getStatus(Number(product.stock || 0));
     const row = document.createElement("tr");
     row.innerHTML = `
+      <td>${index + 1}</td>
       <td>${product.name}</td>
       <td>${product.sku}</td>
       <td>${money(product.price)}</td>
@@ -384,8 +408,35 @@ function renderDraftLines() {
 
 function renderInvoices() {
   el.invoicesBody.innerHTML = "";
+  const now = new Date();
+  const todayKey = now.toLocaleDateString("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = yesterday.toLocaleDateString("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  let activeGroup = "";
 
   state.invoices.forEach((invoice) => {
+    const key = dateKeyIST(invoice.created_at);
+    if (key !== activeGroup) {
+      activeGroup = key;
+      const label = key === todayKey ? "Today" : key === yesterdayKey ? "Yesterday" : formatDateOnlyIST(invoice.created_at);
+      const groupRow = document.createElement("tr");
+      groupRow.className = "invoice-group-row";
+      groupRow.innerHTML = `<td colspan="5"><strong>${label}</strong></td>`;
+      el.invoicesBody.appendChild(groupRow);
+    }
+
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${invoice.number}</td>

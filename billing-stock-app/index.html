@@ -44,7 +44,7 @@
         <input id="customer-phone" type="text" placeholder="Customer phone (optional)" />
 
         <div class="line-item">
-          <input id="invoice-sku" type="text" placeholder="Enter SKU code" list="sku-list" required />
+          <input id="invoice-sku" type="text" placeholder="Enter SKU code" list="sku-list" />
           <datalist id="sku-list"></datalist>
           <input id="invoice-qty" type="number" min="1" value="1" required />
           <input id="invoice-price" type="number" step="0.01" min="0" placeholder="Price" />
@@ -56,6 +56,7 @@
             <thead>
               <tr>
                 <th>Product</th>
+                <th>SKU</th>
                 <th>Qty</th>
                 <th>Price</th>
                 <th>Total</th>
@@ -89,6 +90,7 @@
         <table>
           <thead>
             <tr>
+              <th>No.</th>
               <th>Name</th>
               <th>SKU</th>
               <th>Price</th>
