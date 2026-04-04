@@ -534,7 +534,7 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
@@ -595,6 +595,14 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
             return
         self.handle_api_post(path)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if not path.startswith("/api/"):
+            self.send_error(404, "Not Found")
+            return
+        self.handle_api_delete(path)
 
     def handle_api_get(self, path):
         if path == "/api/health":
@@ -726,6 +734,27 @@ class AppHandler(BaseHTTPRequestHandler):
 
         self._send_json(404, {"error": "Unknown endpoint."})
 
+    def handle_api_delete(self, path):
+        auth_user = self._auth_user_or_401()
+        if not auth_user:
+            return
+
+        parts = path.split("/")
+        # Expected: /api/shops/{shop_id}/products/{product_id}
+        if len(parts) != 6 or parts[1] != "api" or parts[2] != "shops" or parts[4] != "products":
+            self._send_json(404, {"error": "Unknown endpoint."})
+            return
+
+        shop_id = parts[3]
+        product_id = parts[5] if parts[5] else ""
+        if shop_id not in SHOP_IDS or not product_id:
+            self._send_json(404, {"error": "Invalid shop or product."})
+            return
+        if not self._shop_access_or_403(auth_user, shop_id):
+            return
+
+        self.delete_product(shop_id, product_id)
+
     def login(self):
         try:
             payload = self._read_json()
@@ -779,6 +808,24 @@ class AppHandler(BaseHTTPRequestHandler):
                 self._send_json(409, {"error": "SKU already exists in this shop."})
             else:
                 self._send_json(500, {"error": "Could not save product."})
+        finally:
+            conn.close()
+
+    def delete_product(self, shop_id, product_id):
+        conn = db_conn()
+        try:
+            exists = _execute(
+                conn,
+                "SELECT id FROM products WHERE id = ? AND shop_id = ?",
+                (product_id, shop_id),
+            ).fetchone()
+            if not exists:
+                self._send_json(404, {"error": "Product not found in this shop."})
+                return
+
+            _execute(conn, "DELETE FROM products WHERE id = ? AND shop_id = ?", (product_id, shop_id))
+            conn.commit()
+            self._send_json(200, {"ok": True})
         finally:
             conn.close()
 

@@ -375,6 +375,7 @@ function renderInventory() {
           <button type="button" class="small-btn" data-add-stock="${product.id}">Add</button>
         </div>
       </td>
+      <td><button type="button" class="small-btn" data-remove-product="${product.id}">Remove</button></td>
     `;
     el.inventoryBody.appendChild(row);
   });
@@ -650,6 +651,21 @@ async function onReceiveStock(productId, qty) {
   }
 }
 
+async function onRemoveProduct(productId) {
+  if (state.selectedShopId === MAIN_ID) return;
+  if (!productId) return;
+  if (!confirm("Remove this product from inventory?")) return;
+
+  try {
+    await api(`/shops/${state.selectedShopId}/products/${productId}`, {
+      method: "DELETE"
+    });
+    await refresh();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function showTodaySalesByItem(shopId) {
   try {
     const result = await api(`/shops/${shopId}/sales/today`);
@@ -780,6 +796,13 @@ el.invoicesBody.addEventListener("click", (event) => {
 el.inventoryBody.addEventListener("click", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+
+  const removeProductId = target.getAttribute("data-remove-product");
+  if (removeProductId) {
+    await onRemoveProduct(removeProductId);
+    return;
+  }
+
   const productId = target.getAttribute("data-add-stock");
   if (!productId) return;
 
