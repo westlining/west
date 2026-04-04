@@ -148,6 +148,15 @@ function findProductBySku(skuValue) {
   return state.products.find((item) => String(item.sku).trim().toLowerCase() === typedSku) || null;
 }
 
+function productsBySku() {
+  return [...state.products].sort((a, b) =>
+    String(a.sku || "").localeCompare(String(b.sku || ""), undefined, {
+      numeric: true,
+      sensitivity: "base"
+    })
+  );
+}
+
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json" };
   if (state.authToken) {
@@ -345,7 +354,7 @@ function renderMode() {
 function renderProductOptions() {
   if (!el.skuList) return;
   el.skuList.innerHTML = "";
-  state.products.forEach((product) => {
+  productsBySku().forEach((product) => {
     const option = document.createElement("option");
     option.value = product.sku;
     el.skuList.appendChild(option);
@@ -359,7 +368,7 @@ function renderInventory() {
     el.inventoryTotal.textContent = `Total Stocks Available: ${totalStock}`;
   }
 
-  state.products.forEach((product, index) => {
+  productsBySku().forEach((product, index) => {
     const status = getStatus(Number(product.stock || 0));
     const row = document.createElement("tr");
     row.innerHTML = `
