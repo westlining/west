@@ -56,6 +56,7 @@ const el = {
   invoiceModal: document.getElementById("invoice-modal"),
   invoicePrint: document.getElementById("invoice-print"),
   sendWhatsapp: document.getElementById("send-whatsapp"),
+  downloadPdf: document.getElementById("download-pdf"),
   printInvoice: document.getElementById("print-invoice"),
   closeInvoice: document.getElementById("close-invoice"),
 
@@ -523,6 +524,42 @@ function onSendWhatsapp() {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+function onDownloadPdf() {
+  const invoice = state.activeInvoice;
+  if (!invoice) {
+    alert("Open an invoice first.");
+    return;
+  }
+  const jspdf = window.jspdf;
+  if (!jspdf || !jspdf.jsPDF) {
+    alert("PDF library not loaded. Please refresh and try again.");
+    return;
+  }
+
+  const doc = new jspdf.jsPDF({ unit: "pt", format: "a4" });
+  const text = invoiceText(invoice);
+  const margin = 40;
+  const maxWidth = 515;
+  const lineHeight = 16;
+  let y = 48;
+
+  doc.setFont("courier", "normal");
+  doc.setFontSize(11);
+
+  const lines = doc.splitTextToSize(text, maxWidth);
+  lines.forEach((line) => {
+    if (y > 790) {
+      doc.addPage();
+      y = 48;
+    }
+    doc.text(line, margin, y);
+    y += lineHeight;
+  });
+
+  const number = String(invoice.number || "invoice").replace(/[^\w\-]+/g, "_");
+  doc.save(`${number}.pdf`);
+}
+
 async function loadSummary() {
   const data = await api("/shops/summary");
   state.summary = data;
@@ -816,6 +853,7 @@ el.invoiceTax.addEventListener("input", renderDraftLines);
 el.invoiceForm.addEventListener("submit", onGenerateInvoice);
 el.closeInvoice.addEventListener("click", () => el.invoiceModal.close());
 if (el.sendWhatsapp) el.sendWhatsapp.addEventListener("click", onSendWhatsapp);
+if (el.downloadPdf) el.downloadPdf.addEventListener("click", onDownloadPdf);
 el.printInvoice.addEventListener("click", () => window.print());
 
 el.invoiceLines.addEventListener("click", (event) => {
