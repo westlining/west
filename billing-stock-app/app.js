@@ -15,7 +15,8 @@ const state = {
   invoices: [],
   summary: null,
   authToken: "",
-  authUser: null
+  authUser: null,
+  activeInvoice: null
 };
 
 const el = {
@@ -54,6 +55,7 @@ const el = {
 
   invoiceModal: document.getElementById("invoice-modal"),
   invoicePrint: document.getElementById("invoice-print"),
+  sendWhatsapp: document.getElementById("send-whatsapp"),
   printInvoice: document.getElementById("print-invoice"),
   closeInvoice: document.getElementById("close-invoice"),
 
@@ -492,8 +494,33 @@ function invoiceText(invoice) {
 function showInvoice(invoiceId) {
   const invoice = state.invoices.find((item) => item.id === invoiceId);
   if (!invoice) return;
+  state.activeInvoice = invoice;
   el.invoicePrint.textContent = invoiceText(invoice);
   el.invoiceModal.showModal();
+}
+
+function normalizeWhatsappNumber(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length === 10) return `91${digits}`;
+  if (digits.startsWith("0") && digits.length === 11) return `91${digits.slice(1)}`;
+  return digits;
+}
+
+function onSendWhatsapp() {
+  const invoice = state.activeInvoice;
+  if (!invoice) {
+    alert("Open an invoice first.");
+    return;
+  }
+  const phone = normalizeWhatsappNumber(invoice.customer_phone);
+  if (!phone) {
+    alert("Customer phone is missing in this invoice.");
+    return;
+  }
+  const text = invoiceText(invoice);
+  const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 async function loadSummary() {
@@ -631,6 +658,7 @@ async function onGenerateInvoice(event) {
     await refresh();
 
     if (result && result.invoice) {
+      state.activeInvoice = result.invoice;
       el.invoicePrint.textContent = invoiceText(result.invoice);
       el.invoiceModal.showModal();
     }
@@ -765,6 +793,7 @@ function onLogout() {
   state.products = [];
   state.invoices = [];
   state.summary = null;
+  state.activeInvoice = null;
   resetInvoiceForm();
   showLogin(true);
 }
@@ -786,6 +815,7 @@ el.invoiceDiscount.addEventListener("input", renderDraftLines);
 el.invoiceTax.addEventListener("input", renderDraftLines);
 el.invoiceForm.addEventListener("submit", onGenerateInvoice);
 el.closeInvoice.addEventListener("click", () => el.invoiceModal.close());
+if (el.sendWhatsapp) el.sendWhatsapp.addEventListener("click", onSendWhatsapp);
 el.printInvoice.addEventListener("click", () => window.print());
 
 el.invoiceLines.addEventListener("click", (event) => {
