@@ -17,6 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib import request as urlrequest
+from urllib import error as urlerror
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -39,9 +41,12 @@ SHOPS = [
     {"id": "shop3", "name": "Shop 3"},
 ]
 SHOP_IDS = {shop["id"] for shop in SHOPS}
-TOKEN_TTL_SECONDS = 60 * 60 * 12
-TOKENS = {}
+TOKEN_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(60 * 60 * 24 * 30)))
+SESSION_SECRET = os.getenv("SESSION_SECRET", "west-lining-point-session-secret-change-me")
 INVOICE_RETENTION_MONTHS = 2
+WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v22.0")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
 
 
 def ensure_https_certificates(hostnames=None, cert_path=CERT_PATH, key_path=KEY_PATH):
@@ -345,22 +350,37 @@ def public_user_dict(user):
 
 
 def issue_token(user):
-    token = secrets.token_urlsafe(32)
-    TOKENS[token] = {
+    payload = {
         "uid": user["uid"],
         "role": user["role"],
         "shopId": user["shop_id"],
         "expiresAt": int(time.time()) + TOKEN_TTL_SECONDS,
     }
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    sig = hmac.new(SESSION_SECRET.encode("utf-8"), body, hashlib.sha256).digest()
+    token = (
+        base64.urlsafe_b64encode(body).decode("utf-8").rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
+    )
     return token
 
 
 def token_user(token):
-    data = TOKENS.get(token)
-    if not data:
+    try:
+        body_b64, sig_b64 = str(token or "").split(".", 1)
+        body = base64.urlsafe_b64decode(body_b64 + "=" * (-len(body_b64) % 4))
+        sig = base64.urlsafe_b64decode(sig_b64 + "=" * (-len(sig_b64) % 4))
+    except Exception:
+        return None
+    expected = hmac.new(SESSION_SECRET.encode("utf-8"), body, hashlib.sha256).digest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except Exception:
         return None
     if int(time.time()) > int(data["expiresAt"]):
-        TOKENS.pop(token, None)
         return None
     return data
 
@@ -410,6 +430,144 @@ def query_invoices(conn, shop_id, start_iso=None, end_iso=None):
         invoice["lines"] = [serialize_row(line) for line in line_rows]
         invoices.append(invoice)
     return invoices
+
+
+def query_invoice_by_id(conn, shop_id, invoice_id):
+    rows = _execute(
+        conn,
+        """
+        SELECT id, shop_id, number, created_at, customer_name, customer_phone,
+               subtotal, discount, tax_rate, tax_amount, total
+        FROM invoices
+        WHERE shop_id = ? AND id = ?
+        """,
+        (shop_id, invoice_id),
+    ).fetchall()
+    if not rows:
+        return None
+    invoice = serialize_row(rows[0])
+    line_rows = _execute(
+        conn,
+        """
+        SELECT id, invoice_id, product_id, name, qty, price, total
+        FROM invoice_lines
+        WHERE invoice_id = ?
+        ORDER BY name ASC
+        """,
+        (invoice["id"],),
+    ).fetchall()
+    invoice["lines"] = [serialize_row(line) for line in line_rows]
+    return invoice
+
+
+def format_invoice_text(invoice):
+    shop_name = next((s["name"] for s in SHOPS if s["id"] == invoice.get("shop_id")), invoice.get("shop_id", "-"))
+    lines = []
+    lines.append("WEST LINING POINT")
+    lines.append(shop_name)
+    lines.append("-----------------")
+    lines.append(f"Invoice No: {invoice.get('number', '-')}")
+    lines.append(f"Date: {invoice.get('created_at', '-')}")
+    lines.append(f"Customer: {invoice.get('customer_name', '-')}")
+    lines.append(f"Phone: {invoice.get('customer_phone') or '-'}")
+    lines.append("")
+    lines.append("Items:")
+    for line in invoice.get("lines", []):
+        lines.append(
+            f"{line.get('name', '-')} | Qty: {line.get('qty', 0)} | "
+            f"Price: {float(line.get('price', 0)):.2f} | Total: {float(line.get('total', 0)):.2f}"
+        )
+    lines.append("")
+    lines.append(f"Subtotal: {float(invoice.get('subtotal', 0)):.2f}")
+    lines.append(f"Discount: {float(invoice.get('discount', 0)):.2f}")
+    lines.append(f"Tax ({float(invoice.get('tax_rate', 0)):.2f}%): {float(invoice.get('tax_amount', 0)):.2f}")
+    lines.append(f"Grand Total: {float(invoice.get('total', 0)):.2f}")
+    return "\n".join(lines)
+
+
+def generate_invoice_pdf_bytes(invoice):
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+    x = 40
+    y = height - 40
+    c.setFont("Courier", 10)
+
+    for line in format_invoice_text(invoice).splitlines():
+        if y < 40:
+            c.showPage()
+            c.setFont("Courier", 10)
+            y = height - 40
+        c.drawString(x, y, line[:130])
+        y -= 14
+    c.save()
+    return buf.getvalue()
+
+
+def normalize_phone_number(phone):
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if not digits:
+        return ""
+    if len(digits) == 10:
+        return "91" + digits
+    if digits.startswith("0") and len(digits) == 11:
+        return "91" + digits[1:]
+    return digits
+
+
+def _http_json(url, method, headers, body):
+    req = urlrequest.Request(url, method=method, headers=headers, data=body)
+    with urlrequest.urlopen(req, timeout=30) as resp:
+        raw = resp.read().decode("utf-8")
+    return json.loads(raw) if raw else {}
+
+
+def whatsapp_send_invoice_pdf(phone, invoice, pdf_bytes):
+    if not WHATSAPP_PHONE_NUMBER_ID or not WHATSAPP_ACCESS_TOKEN:
+        raise ValueError("WhatsApp is not configured. Set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN.")
+
+    boundary = f"----wlp{uuid.uuid4().hex}"
+    filename = f"{str(invoice.get('number') or 'invoice').replace('/', '-')}.pdf"
+    parts = []
+    parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"messaging_product\"\r\n\r\nwhatsapp\r\n")
+    parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+        "Content-Type: application/pdf\r\n\r\n"
+    )
+    head = "".join(parts).encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    form_data = head + pdf_bytes + tail
+
+    media_url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/media"
+    media_headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    }
+    media_resp = _http_json(media_url, "POST", media_headers, form_data)
+    media_id = media_resp.get("id")
+    if not media_id:
+        raise ValueError("Failed to upload invoice PDF to WhatsApp media API.")
+
+    send_url = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    send_payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "document",
+        "document": {
+            "id": media_id,
+            "filename": filename,
+            "caption": f"Invoice {invoice.get('number', '')} - WEST LINING POINT",
+        },
+    }
+    send_headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    return _http_json(send_url, "POST", send_headers, json.dumps(send_payload).encode("utf-8"))
 
 
 def utc_now():
@@ -706,6 +864,10 @@ class AppHandler(BaseHTTPRequestHandler):
         if not auth_user:
             return
 
+        if path == "/api/whatsapp/send-invoice":
+            self.send_invoice_whatsapp(auth_user)
+            return
+
         parts = path.split("/")
         shop_id = self._parse_shop_id(parts)
         if not shop_id:
@@ -733,6 +895,48 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(404, {"error": "Unknown endpoint."})
+
+    def send_invoice_whatsapp(self, auth_user):
+        try:
+            payload = self._read_json()
+        except Exception:
+            self._send_json(400, {"error": "Invalid JSON payload."})
+            return
+
+        shop_id = str(payload.get("shopId", "")).strip()
+        invoice_id = str(payload.get("invoiceId", "")).strip()
+        phone_raw = str(payload.get("phone", "")).strip()
+        if shop_id not in SHOP_IDS or not invoice_id:
+            self._send_json(400, {"error": "shopId and invoiceId are required."})
+            return
+        if not self._shop_access_or_403(auth_user, shop_id):
+            return
+
+        conn = db_conn()
+        try:
+            invoice = query_invoice_by_id(conn, shop_id, invoice_id)
+        finally:
+            conn.close()
+        if not invoice:
+            self._send_json(404, {"error": "Invoice not found."})
+            return
+
+        phone = normalize_phone_number(phone_raw or invoice.get("customer_phone"))
+        if not phone:
+            self._send_json(400, {"error": "Customer phone is missing."})
+            return
+
+        try:
+            pdf_bytes = generate_invoice_pdf_bytes(invoice)
+            result = whatsapp_send_invoice_pdf(phone, invoice, pdf_bytes)
+            self._send_json(200, {"ok": True, "result": result})
+        except ValueError as err:
+            self._send_json(400, {"error": str(err)})
+        except urlerror.HTTPError as err:
+            detail = err.read().decode("utf-8", errors="ignore")
+            self._send_json(502, {"error": "WhatsApp API error.", "detail": detail})
+        except Exception:
+            self._send_json(500, {"error": "Could not send WhatsApp PDF."})
 
     def handle_api_delete(self, path):
         auth_user = self._auth_user_or_401()

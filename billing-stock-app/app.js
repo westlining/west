@@ -508,7 +508,7 @@ function normalizeWhatsappNumber(phone) {
   return digits;
 }
 
-function onSendWhatsapp() {
+async function onSendWhatsapp() {
   const invoice = state.activeInvoice;
   if (!invoice) {
     alert("Open an invoice first.");
@@ -519,9 +519,19 @@ function onSendWhatsapp() {
     alert("Customer phone is missing in this invoice.");
     return;
   }
-  const text = invoiceText(invoice);
-  const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-  window.open(url, "_blank", "noopener,noreferrer");
+  try {
+    await api("/whatsapp/send-invoice", {
+      method: "POST",
+      body: JSON.stringify({
+        shopId: invoice.shop_id || state.selectedShopId,
+        invoiceId: invoice.id,
+        phone
+      })
+    });
+    alert("WhatsApp PDF sent successfully.");
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 function onDownloadPdf() {
