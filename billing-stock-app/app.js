@@ -46,8 +46,14 @@ const el = {
   invoiceTax: document.getElementById("invoice-tax"),
   invoiceTotal: document.getElementById("invoice-total"),
 
+  inventoryPanel: document.getElementById("inventory-panel"),
+  inventorySearch: document.getElementById("inventory-search"),
   inventoryBody: document.getElementById("inventory-body"),
   inventoryTotal: document.getElementById("inventory-total"),
+  restockQuery: document.getElementById("restock-query"),
+  restockList: document.getElementById("restock-list"),
+  restockQty: document.getElementById("restock-qty"),
+  restockAddBtn: document.getElementById("restock-add-btn"),
   invoicesBody: document.getElementById("invoices-body"),
 
   exportJson: document.getElementById("export-json"),
@@ -148,6 +154,40 @@ function findProductBySku(skuValue) {
   const typedSku = String(skuValue || "").trim().toLowerCase();
   if (!typedSku) return null;
   return state.products.find((item) => String(item.sku).trim().toLowerCase() === typedSku) || null;
+}
+
+function cleanSearchText(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.split("|")[0].trim().toLowerCase();
+}
+
+function findProductBySkuOrName(value) {
+  const q = cleanSearchText(value);
+  if (!q) return null;
+  const products = productsBySku();
+  const exact = products.find((item) => {
+    const sku = String(item.sku || "").trim().toLowerCase();
+    const name = String(item.name || "").trim().toLowerCase();
+    return sku === q || name === q;
+  });
+  if (exact) return exact;
+  return products.find((item) => {
+    const sku = String(item.sku || "").trim().toLowerCase();
+    const name = String(item.name || "").trim().toLowerCase();
+    return sku.startsWith(q) || name.startsWith(q);
+  }) || null;
+}
+
+function filteredProductsByQuery(value) {
+  const q = cleanSearchText(value);
+  const products = productsBySku();
+  if (!q) return products;
+  return products.filter((item) => {
+    const sku = String(item.sku || "").trim().toLowerCase();
+    const name = String(item.name || "").trim().toLowerCase();
+    return sku.startsWith(q) || name.startsWith(q);
+  });
 }
 
 function productsBySku() {
@@ -356,10 +396,19 @@ function renderMode() {
 function renderProductOptions() {
   if (!el.skuList) return;
   el.skuList.innerHTML = "";
-  productsBySku().forEach((product) => {
+  const items = filteredProductsByQuery(el.invoiceSku ? el.invoiceSku.value : "");
+  items.forEach((product) => {
     const option = document.createElement("option");
-    option.value = product.sku;
+    option.value = `${product.sku} | ${product.name}`;
     el.skuList.appendChild(option);
+  });
+  if (!el.restockList) return;
+  el.restockList.innerHTML = "";
+  const restockItems = filteredProductsByQuery(el.restockQuery ? el.restockQuery.value : "");
+  restockItems.forEach((product) => {
+    const option = document.createElement("option");
+    option.value = `${product.sku} | ${product.name}`;
+    el.restockList.appendChild(option);
   });
 }
 
@@ -370,7 +419,8 @@ function renderInventory() {
     el.inventoryTotal.textContent = `Total Stocks Available: ${totalStock}`;
   }
 
-  productsBySku().forEach((product, index) => {
+  const visibleProducts = filteredProductsByQuery(el.inventorySearch ? el.inventorySearch.value : "");
+  visibleProducts.forEach((product, index) => {
     const status = getStatus(Number(product.stock || 0));
     const row = document.createElement("tr");
     row.innerHTML = `
@@ -564,13 +614,13 @@ async function refresh() {
 }
 
 function addDraftLine() {
-  const product = findProductBySku(el.invoiceSku.value);
+  const product = findProductBySkuOrName(el.invoiceSku.value);
   const qty = Number(el.invoiceQty.value || 0);
   const priceRaw = String((el.invoicePrice && el.invoicePrice.value) || "").trim();
   const unitPrice = priceRaw === "" ? Number(product && product.price) : Number(priceRaw);
 
   if (!product || qty <= 0) {
-    alert("Enter a valid SKU and quantity.");
+    alert("Enter a valid SKU/Product name and quantity.");
     return;
   }
   if (!Number.isFinite(unitPrice) || unitPrice < 0) {
@@ -597,6 +647,7 @@ function addDraftLine() {
   if (el.invoicePrice) el.invoicePrice.value = "";
   el.invoiceSku.focus();
   renderDraftLines();
+  renderProductOptions();
 }
 
 function removeDraftLine(index) {
@@ -686,6 +737,19 @@ async function onReceiveStock(productId, qty) {
   } catch (error) {
     alert(error.message);
   }
+}
+
+async function onQuickRestock() {
+  const product = findProductBySkuOrName(el.restockQuery ? el.restockQuery.value : "");
+  const qty = Number((el.restockQty && el.restockQty.value) || 0);
+  if (!product || qty <= 0) {
+    alert("Enter valid SKU/Product name and quantity.");
+    return;
+  }
+  await onReceiveStock(product.id, qty);
+  if (el.restockQuery) el.restockQuery.value = "";
+  if (el.restockQty) el.restockQty.value = "1";
+  renderProductOptions();
 }
 
 async function onRemoveProduct(productId) {
@@ -801,9 +865,11 @@ function onLogout() {
 el.productForm.addEventListener("submit", onAddProduct);
 el.addLineItem.addEventListener("click", addDraftLine);
 el.invoiceSku.addEventListener("input", () => {
-  const product = findProductBySku(el.invoiceSku.value);
-  if (!product || !el.invoicePrice) return;
-  el.invoicePrice.value = Number(product.price).toFixed(2);
+  renderProductOptions();
+  const product = findProductBySkuOrName(el.invoiceSku.value);
+  if (el.invoicePrice && product) {
+    el.invoicePrice.value = Number(product.price).toFixed(2);
+  }
 });
 el.invoiceSku.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -817,6 +883,21 @@ el.invoiceForm.addEventListener("submit", onGenerateInvoice);
 el.closeInvoice.addEventListener("click", () => el.invoiceModal.close());
 if (el.sendWhatsapp) el.sendWhatsapp.addEventListener("click", onSendWhatsapp);
 el.printInvoice.addEventListener("click", () => window.print());
+if (el.inventorySearch) {
+  el.inventorySearch.addEventListener("input", () => renderInventory());
+}
+if (el.restockQuery) {
+  el.restockQuery.addEventListener("input", () => renderProductOptions());
+  el.restockQuery.addEventListener("keydown", async (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      await onQuickRestock();
+    }
+  });
+}
+if (el.restockAddBtn) {
+  el.restockAddBtn.addEventListener("click", onQuickRestock);
+}
 
 el.invoiceLines.addEventListener("click", (event) => {
   const target = event.target;
